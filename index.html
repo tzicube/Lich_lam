@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>簡易排班表 — 紅白黑主題</title>
+  <style>
+    :root{
+      --bg:#0b0b0c;        /* 黑 */
+      --panel:#121214;     /* 黑深 */
+      --text:#ffffff;      /* 白 */
+      --muted:#c8c8c8;     /* 淡白 */
+      --accent:#e53935;    /* 紅 */
+      --border:#26262a;    
+      --cell:#121417;
+      --cell2:#15181b;
+      --today:#1a0e0e;     /* 紅暗背景 */
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 system-ui,Roboto,Segoe UI,Helvetica,Arial}
+    a{color:var(--accent)}
+
+    /* Logo 左上角 */
+    .logo-fixed{position:fixed;left:14px;top:14px;z-index:50;display:flex;align-items:center;gap:10px}
+    .logo-fixed img{width:42px;height:42px;border-radius:8px;border:1px solid var(--border);background:#fff;object-fit:contain}
+    .logo-fixed .brand{font-weight:800;letter-spacing:.5px;color:#fff}
+
+    /* 舞台三欄：左旗幟 | 中心排班 | 右旗幟 */
+    .stage-wrap{max-width:1280px;margin:72px auto 40px;padding:0 16px}
+    #stage{display:grid;grid-template-columns:260px 1fr 260px;gap:18px;align-items:center;justify-content:center}
+
+    /* 兩側直幅圖 */
+    .banner{background:#111;border:1px solid var(--border);border-radius:16px;display:flex;align-items:center;justify-content:center;padding:8px;height:480px; /* 初始高度，將用JS同步為中間內容高度 */ overflow:hidden}
+    .banner img{width:100%;height:100%;object-fit:cover;filter:drop-shadow(0 6px 24px #0007)}
+
+    /* 中央內容 */
+    .wrap{background:var(--panel);border:1px solid var(--border);border-radius:18px;box-shadow:0 12px 36px #00000066;padding:18px}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+    .date-badge{font-size:18px;letter-spacing:.5px;color:#fff;background:#1a1a1d;border:1px solid var(--border);border-radius:10px;padding:6px 12px}
+    .hint{color:var(--muted)}
+    .toolbar{display:flex;gap:8px;margin-left:auto}
+    button{background:#1a1a1d;border:1px solid var(--border);color:#fff;border-radius:10px;padding:8px 12px;cursor:pointer}
+    button:hover{background:#202023}
+    .btn-red{background:var(--accent);border-color:#d32f2f}
+    .btn-red:hover{background:#d12a26}
+
+    .board{margin-top:16px;background:linear-gradient(180deg,#131316,#0f0f12);border:1px solid var(--border);border-radius:16px;padding:16px}
+    h2.section{color:var(--accent);text-align:center;margin:10px 0 8px;font-weight:800;letter-spacing:1px}
+    .tablewrap{overflow:auto;border-radius:10px;border:1px solid #2a2a2e}
+    table{width:100%;border-collapse:separate;border-spacing:0;background:#0f1114}
+    th,td{border:1px solid #2a2a2e}
+    th{position:sticky;top:0;background:#141418;color:#fff;font-weight:700}
+    th:first-child, td:first-child{min-width:140px}
+    th,td{padding:12px 12px;text-align:center;white-space:nowrap}
+    .name{background:#121216;font-weight:700}
+    select{width:100%;background:var(--cell);color:#fff;border:1px solid #303036;border-radius:12px;padding:12px 16px;font-size:16px;line-height:1.3;min-height:44px;min-width:180px;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .subbar{display:flex;justify-content:space-between;align-items:center;margin:6px 0 12px;color:var(--muted)}
+    .add-row{background:#1a1a1d;border-color:#2a2a2e}
+    .sticky-note{color:#bdbdbd;font-size:12px}
+    .foot{margin-top:18px;text-align:center;color:#bdbdbd}
+    .pill{display:inline-block;border:1px dashed #b71c1c;color:#ffcccb;padding:3px 8px;border-radius:999px;margin-left:6px}
+    .today-col{background:var(--today) !important}
+    .clock{font-size:14px; opacity:.9}
+    .day-label{font-weight:800}
+    .date-label{font-size:12px;color:#ffb3b0}
+
+    /* 下載結果區 */
+    .shot-area{max-width:1280px;margin:8px auto 40px;padding:0 16px}
+    .shot-grid{display:grid;grid-template-columns:1fr;gap:12px}
+    .shot-card{background:#111;border:1px solid var(--border);border-radius:14px;padding:10px}
+    .shot-card img{width:100%;height:auto;border-radius:10px}
+  </style>
+</head>
+<body>
+  <div class="logo-fixed">
+    <img id="logoImg" alt="logo"/>
+    <span class="brand">東山鴨頭</span>
+  </div>
+
+  <div class="stage-wrap">
+    <div id="stage">
+      <!-- 左直幅 -->
+      <aside class="banner">
+        <img id="leftBanner" alt="left banner"/>
+      </aside>
+
+      <!-- 中央排班（兩家店） -->
+      <main class="wrap">
+        <header>
+          <span class="date-badge" id="rangeText">--/-- – --/--</span>
+          <span class="hint">排班區間：<b>週三</b> → <b>週一</b>（週二公休）</span>
+          <span class="date-badge clock" id="clock">--:--:--</span>
+          <div class="toolbar">
+            <button id="btnSave">儲存</button>
+            <button id="btnLoad">載入</button>
+            <button id="btnClear">清空資料</button>
+            <button id="btnShot" class="btn-red">下載圖片</button>
+          </div>
+        </header>
+
+        <!-- 大業店 -->
+        <section class="board" id="store-da-ye">
+          <h2 class="section">大業店</h2>
+          <div class="subbar">
+            <div class="sticky-note">可直接修改姓名。<span class="pill">新增人員 →</span></div>
+            <button class="add-row" data-store="da-ye">+ 新增人員</button>
+          </div>
+          <div class="tablewrap"><table id="table-da-ye"></table></div>
+        </section>
+
+        <!-- 龜山店 -->
+        <section class="board" id="store-gueishan">
+          <h2 class="section">龜山店</h2>
+          <div class="subbar">
+            <div class="sticky-note">可直接修改姓名。<span class="pill">新增人員 →</span></div>
+            <button class="add-row" data-store="gueishan">+ 新增人員</button>
+          </div>
+          <div class="tablewrap"><table id="table-gueishan"></table></div>
+        </section>
+
+        <div class="foot">每次變更自動儲存（僅儲存在此瀏覽器）。</div>
+      </main>
+
+      <!-- 右直幅 -->
+      <aside class="banner">
+        <img id="rightBanner" alt="right banner"/>
+      </aside>
+    </div>
+  </div>
+
+  <!-- 下載結果預覽 -->
+  <div class="shot-area" id="shotArea" hidden>
+    <div class="shot-grid" id="shotGrid"></div>
+  </div>
+
+  <!-- html2canvas for image export -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script>
+  // ====== 設定 ======
+  const DAYS = ["週一","週二","週三","週四","週五","週六","週日"]; // Mon..Sun (zh-TW)
+  const START_H = 15; // 3:00 PM
+  const END_H = 24;   // 24:00
+  const STEP_MIN = 30; // 30 分鐘
+  const STORES = [
+    { key: 'da-ye', tableId: 'table-da-ye' },
+    { key: 'gueishan', tableId: 'table-gueishan' }
+  ];
+
+  // 載入預設圖（可換成你上傳的網址）
+  const DEFAULT_BANNER = 'panner.png';
+  const DEFAULT_LOGO   = 'logo.png';
+  document.getElementById('leftBanner').src = DEFAULT_BANNER;
+  document.getElementById('rightBanner').src = DEFAULT_BANNER;
+  document.getElementById('logoImg').src     = DEFAULT_LOGO;
+
+  // ====== 區間（週三 → 週一） ======
+  function calcWedToMonRange(baseDate=new Date()){
+    const d = new Date(baseDate);
+    const dow = d.getDay(); // 0=Sun..6=Sat
+    const deltaBack = (dow - 3 + 7) % 7; // 回到本週的週三
+    const start = new Date(d);
+    start.setDate(d.getDate() - deltaBack);
+    start.setHours(0,0,0,0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 5); // Wed..Mon
+    return {start, end};
+  }
+  function fmtMD(x){return `${x.getMonth()+1}/${x.getDate()}`}
+  (function initRange(){
+    const {start,end} = calcWedToMonRange(new Date());
+    document.getElementById('rangeText').textContent = `${fmtMD(start)} – ${fmtMD(end)}`;
+  })();
+
+  // ====== 產生 30 分鐘區段 ======
+  function buildSlotOptions(){
+    const opts = [{value:"",label:""},{value:"X",label:"X"}];
+    const totalMin = (END_H-START_H)*60;
+    for(let m=0;m<totalMin;m+=STEP_MIN){
+      const h = START_H + Math.floor(m/60);
+      const mm = m%60;
+      const nextMin = m+STEP_MIN;
+      const h2 = START_H + Math.floor(nextMin/60);
+      const mm2 = nextMin%60;
+      const label = `${pad(h)}:${pad(mm)}–${pad(h2)}:${pad(mm2)}`;
+      opts.push({value:label,label});
+    }
+    return opts;
+  }
+  function pad(n){return String(n).padStart(2,'0')}
+  const SLOT_OPTIONS = buildSlotOptions();
+
+  // ====== 畫表格 ======
+  function createTable(storeKey, tableId){
+    const table = document.getElementById(tableId);
+    table.innerHTML = '';
+
+    const thead = document.createElement('thead');
+    const trH = document.createElement('tr');
+    const thName = document.createElement('th');
+    thName.textContent = '姓名';
+    trH.appendChild(thName);
+
+    // 表頭：星期 + 日期
+    DAYS.forEach((d,idx) => {
+      const th = document.createElement('th');
+      const daySpan = document.createElement('div'); daySpan.textContent = d; daySpan.className = 'day-label';
+      const dateSpan = document.createElement('div'); dateSpan.className = 'date-label'; dateSpan.setAttribute('data-day-index', idx);
+      th.appendChild(daySpan); th.appendChild(dateSpan); trH.appendChild(th);
+    });
+    thead.appendChild(trH);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+
+    // 預設 5 列
+    for(let i=0;i<5;i++) addRow(storeKey);
+    // 渲染後同步側邊高度
+    resizeBanners();
+  }
+
+  function addRow(storeKey, rowData=null){
+    const table = document.getElementById(`table-${storeKey}`);
+    const tbody = table.querySelector('tbody');
+    const tr = document.createElement('tr');
+
+    const tdName = document.createElement('td');
+    tdName.className='name';
+    tdName.contentEditable = true;
+    tdName.spellcheck = false;
+    tdName.textContent = rowData?.name || '';
+    tdName.addEventListener('input', autoSave);
+    tr.appendChild(tdName);
+
+    for(let i=0;i<DAYS.length;i++){
+      const td = document.createElement('td');
+      const sel = document.createElement('select');
+      SLOT_OPTIONS.forEach(o=>{
+        const op=document.createElement('option'); op.value=o.value; op.textContent=o.label; sel.appendChild(op);
+      });
+      sel.value = rowData?.days?.[i] || '';
+      sel.addEventListener('change', autoSave);
+      td.appendChild(sel); tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+    // 每次變更後同步側邊高度
+    resizeBanners();
+  }
+
+  // ====== 儲存 / 載入（localStorage） ======
+  function snapshot(){
+    const data = {};
+    for(const s of STORES){
+      data[s.key] = [];
+      const rows = document.querySelectorAll(`#${s.tableId} tbody tr`);
+      rows.forEach(tr=>{
+        const name = tr.children[0].textContent.trim();
+        const days = [];
+        for(let i=1;i<=DAYS.length;i++){
+          const sel = tr.children[i]?.querySelector('select');
+          days.push(sel ? sel.value : '');
+        }
+        data[s.key].push({name,days});
+      });
+    }
+    return data;
+  }
+  function restore(data){
+    if(!data) return;
+    for(const s of STORES){
+      const table = document.getElementById(s.tableId);
+      table.innerHTML='';
+      createTable(s.key, s.tableId);
+      const tbody = table.querySelector('tbody');
+      tbody.innerHTML='';
+      (data[s.key]||[]).forEach(row=>addRow(s.key,row));
+      if((data[s.key]||[]).length===0){ for(let i=0;i<5;i++) addRow(s.key); }
+    }
+  }
+  function autoSave(){ localStorage.setItem('simpleShift', JSON.stringify(snapshot())); }
+
+  // ====== 實時時間 & 標頭日期 ======
+  function setHeaderDates(){
+    const {start} = calcWedToMonRange(new Date()); // 週三為起點
+    const offsets = [5,6,0,1,2,3,4]; // 週一..週日 對應到 起點週三 的位移天數
+    STORES.forEach(s=>{
+      const table = document.getElementById(s.tableId);
+      if(!table) return;
+      offsets.forEach((off,idx)=>{
+        const d = new Date(start);
+        d.setDate(start.getDate()+off);
+        let label = fmtMD(d);
+        if(idx===1) label += '（休）'; // 週二公休
+        const el = table.querySelector(`.date-label[data-day-index="${idx}"]`);
+        if(el) el.textContent = label;
+      });
+    });
+  }
+
+  function updateClock(){
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('clock').textContent = `${hh}:${mm}:${ss}`;
+  }
+  function updateRangeIfNeeded(){
+    const {start,end} = calcWedToMonRange(new Date());
+    const text = `${fmtMD(start)} – ${fmtMD(end)}`;
+    const el = document.getElementById('rangeText');
+    if(el.textContent !== text) el.textContent = text;
+  }
+  function markToday(){
+    const dow = new Date().getDay(); // 0=Sun..6=Sat
+    const idx = (dow+6)%7; // 轉 Mon=0 .. Sun=6
+    const apply = (tableId)=>{
+      const table = document.getElementById(tableId);
+      if(!table) return;
+      table.querySelectorAll('th,td').forEach(c=>c.classList.remove('today-col'));
+      const rows = table.querySelectorAll('tr');
+      rows.forEach(r=>{ const cell = r.children[idx+1]; if(cell) cell.classList.add('today-col'); });
+    };
+    STORES.forEach(s=>apply(s.tableId));
+  }
+  setInterval(()=>{ updateClock(); updateRangeIfNeeded(); markToday(); setHeaderDates(); resizeBanners(); },1000);
+  updateClock(); markToday(); updateRangeIfNeeded(); setHeaderDates();
+
+  // ====== 事件 ======
+  STORES.forEach(s=>createTable(s.key, s.tableId));
+  Array.from(document.querySelectorAll('.add-row')).forEach(btn=>{
+    btn.addEventListener('click',()=>{ addRow(btn.dataset.store); autoSave(); });
+  });
+  btnSave.addEventListener('click',()=>{ autoSave(); btnSave.textContent='已儲存'; setTimeout(()=>btnSave.textContent='儲存',900); });
+  btnLoad.addEventListener('click',()=>{ const data = JSON.parse(localStorage.getItem('simpleShift')||'{}'); restore(data); resizeBanners(); });
+  btnClear.addEventListener('click',()=>{ if(confirm('確定要清空全部資料嗎？')){ localStorage.removeItem('simpleShift'); location.reload(); }});
+  restore(JSON.parse(localStorage.getItem('simpleShift')||'{}'));
+  window.addEventListener('storage', (e)=>{ if(e.key==='simpleShift'){ restore(JSON.parse(e.newValue||'{}')); resizeBanners(); }});
+  window.addEventListener('resize', resizeBanners);
+
+  // 同步側邊旗幟高度以置中/撐滿
+  function resizeBanners(){
+    const wrap = document.querySelector('.wrap');
+    if(!wrap) return;
+    const h = wrap.offsetHeight;
+    document.getElementById('leftBanner').parentElement.style.height = h + 'px';
+    document.getElementById('rightBanner').parentElement.style.height = h + 'px';
+  }
+
+  // ====== 下載整個舞台為 PNG，並在下方預覽 ======
+  async function downloadPNG(){
+    const el = document.getElementById('stage');
+    const title = document.getElementById('rangeText').textContent.replace(/\s|–/g,'_');
+    const canvas = await html2canvas(el,{backgroundColor:'#0b0b0c',scale:2});
+    const blob = await new Promise(res=>canvas.toBlob(res));
+    const url = URL.createObjectURL(blob);
+    // 下載
+    const a=document.createElement('a');
+    a.href=url; a.download=`排班_${title}.png`; a.click();
+    // 預覽
+    const img = new Image(); img.src = url; img.alt = '排班截圖';
+    const card = document.createElement('div'); card.className='shot-card'; card.appendChild(img);
+    const grid = document.getElementById('shotGrid'); grid.prepend(card);
+    document.getElementById('shotArea').hidden = false;
+  }
+  document.getElementById('btnShot').addEventListener('click', downloadPNG);
+
+  // ====== 測試（Console） ======
+  (function runTests(){
+    const log=(msg)=>console.log('%c[Test] '+msg,'color:#ff8a80');
+    const opts = buildSlotOptions();
+    console.assert(opts.length===20, '時段數量應為 18 + 空白 + X = 20');
+    console.assert(opts[0].value==='' && opts[1].value==='X', '前兩個選項應為空白與 X');
+    console.assert(opts.at(-1).value==='23:30–24:00', '最後一段應為 23:30–24:00');
+    log('Slot options OK');
+    const d = new Date('2025-09-29T00:00:00');
+    const r = calcWedToMonRange(d);
+    console.assert(fmtMD(r.start)==='9/24' && fmtMD(r.end)==='9/29', '2025/9/29 所在區間應為 9/24–9/29');
+    log('Range calc OK');
+    const snap = snapshot();
+    console.assert(Array.isArray(snap['da-ye']) && Array.isArray(snap['gueishan']), 'Snapshot 應包含兩家店的陣列');
+    log('Snapshot structure OK');
+  })();
+  </script>
+</body>
+</html>
