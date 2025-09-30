@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>簡易排班表</title>
+  <style>
+    body{margin:0;background:#000;color:#fff;font:18px/1.6 "Times New Roman",serif}
+    .stage{max-width:1000px;margin:30px auto;padding:0 0}
+    .panel{background:#111;border:1px solid #333;padding:20px}
+    header{text-align:center;margin-bottom:18px}
+    .range{display:inline-block;border:1px solid #444;padding:6px 10px;border-radius:6px}
+    .toolbar{margin-top:10px}
+    button{background:#444;color:#fff;border:1px solid #666;padding:6px 12px;margin:0 4px;cursor:pointer;font-size:16px;border-radius:6px}
+    .btn-red{background:#b00;border-color:#900}
+
+    h2.section{color:#b00;text-align:center;margin:16px 0 10px;font-size:22px;font-weight:700}
+
+    table{width:100%;border-collapse:collapse;background:#000;color:#fff;margin:0 0 10px}
+    th,td{border:1px solid #b00;text-align:center;padding:6px;font-size:16px}
+    th{background:#111;font-weight:700}
+    .name{font-weight:700}
+    .day{display:block;font-weight:700}
+    .date{display:block;font-size:13px;color:#ffb3b0}
+    select{width:100%;background:#000;color:#fff;border:1px solid #444;padding:3px 4px;font-size:15px}
+    .foot{text-align:center;font-size:14px;margin-top:18px;color:#aaa}
+    html,body{overflow-x:hidden}
+    .addRowBtn{text-align:right;margin-bottom:20px}
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <main class="panel">
+      <header>
+        <div id="rangeText" class="range">--/-- – --/--</div>
+        <div class="toolbar">
+          <button id="btnSave">儲存</button>
+          <button id="btnLoad">載入</button>
+          <button id="btnClear">清空資料</button>
+          <button id="btnShotDaYe" class="btn-red">下載大業店</button>
+          <button id="btnShotGueishan" class="btn-red">下載龜山店</button>
+          <button id="btnShotMerge" class="btn-red">合併下載</button>
+        </div>
+      </header>
+
+      <section id="sec-daye">
+        <h2 class="section">大業店</h2>
+        <div class="addRowBtn"><button class="btn-red" onclick="addRow('da-ye')">+ 新增人員</button></div>
+        <table id="table-da-ye"></table>
+      </section>
+
+      <section id="sec-gueishan">
+        <h2 class="section">龜山店</h2>
+        <div class="addRowBtn"><button class="btn-red" onclick="addRow('gueishan')">+ 新增人員</button></div>
+        <table id="table-gueishan"></table>
+      </section>
+
+      <div class="foot">每次變更自動儲存（僅儲存在此瀏覽器）。</div>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script>
+  const DAYS = ["週一","週二","週三","週四","週五","週六","週日"]; // header giữ nguyên
+  const START_H = 15, END_H = 24;
+  const DEFAULT_ROWS = 7;
+  const KEY = 'simpleShift_min';
+
+  const $ = (s, r=document)=>r.querySelector(s);
+  const pad = n => String(n).padStart(2,'0');
+  const fmt = d => (d.getMonth()+1)+"/"+d.getDate();
+
+  // ===== TUẦN HIỂN THỊ: từ THỨ 3 -> THỨ 2 tuần sau; chuyển mốc lúc 00:01 Thứ 3 =====
+  function mondayOfWeekLocal(d){ // 0=Sun..6=Sat
+    const x=new Date(d); x.setHours(0,0,0,0);
+    const dow=x.getDay();
+    const diff=(dow+6)%7; // days since Monday
+    x.setDate(x.getDate()-diff);
+    return x;
+  }
+  function tuesdayOfWeekLocal(d){
+    const mon=mondayOfWeekLocal(d);
+    const tue=new Date(mon); tue.setDate(mon.getDate()+1);
+    return tue;
+  }
+  function getDisplayStartTuesday(now=new Date()){
+    const d=new Date(now);
+    const dow=d.getDay();            // 0=Sun,1=Mon,2=Tue
+    const h=d.getHours(), m=d.getMinutes();
+    const isAfterSwitch = (dow>2) || (dow===2 && (h>0 || m>=1)); // >= 00:01 Tue
+    if (isAfterSwitch){
+      const tue=tuesdayOfWeekLocal(d);
+      tue.setHours(0,0,0,0);
+      return tue;                    // Thứ 3 tuần hiện tại
+    }else{
+      const lastWeek=new Date(d);
+      lastWeek.setDate(d.getDate()-7);
+      const tue=tuesdayOfWeekLocal(lastWeek);
+      tue.setHours(0,0,0,0);
+      return tue;                    // Thứ 3 tuần trước
+    }
+  }
+  function datesTueToMon(startTue){
+    const arr=[];
+    for(let i=0;i<7;i++){ const x=new Date(startTue); x.setDate(startTue.getDate()+i); arr.push(x); }
+    const monNext = new Date(startTue); monNext.setDate(startTue.getDate()+7); // thứ 2 tuần sau (ngày thứ 7)
+    return {seq:arr, endMon:monNext};
+  }
+
+  // Map ngày vào cột (header cố định Mon..Sun): [Mon,Tue,Wed,Thu,Fri,Sat,Sun] <- [Mon(end),Tue(0),Wed(1),Thu(2),Fri(3),Sat(4),Sun(5)]
+  const COL_OFFSETS_FROM_TUE = [6,0,1,2,3,4,5];
+
+  let currentDisplayStartMs = 0; // mốc để phát hiện đổi tuần (00:01 Tue)
+
+  // ==== OPTION giờ bắt đầu / giờ tan làm ====
+  function buildOptions(isEnd=false){
+    const frag=document.createDocumentFragment();
+    const add=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;frag.appendChild(o)};
+    add('', ''); add('X','X');
+    for(let h=START_H; h<END_H; h++){
+      add(`${pad(h)}:00`,`${pad(h)}:00`);
+      add(`${pad(h)}:30`,`${pad(h)}:30`);
+    }
+    add("24:00","24:00");
+    if(isEnd){
+      add("00:30","00:30");
+      add("01:00","01:00");
+    }
+    return frag;
+  }
+  const OPTION_FRAG_START = buildOptions(false);
+  const OPTION_FRAG_END   = buildOptions(true);
+
+  function headerDates(){
+    const tue = getDisplayStartTuesday();
+    const {seq} = datesTueToMon(tue);
+    // Trả ra 7 ngày theo thứ tự cột Mon..Sun
+    return COL_OFFSETS_FROM_TUE.map(off=>{ const x=new Date(tue); x.setDate(tue.getDate()+off); return x; });
+  }
+
+  function buildTable(tableId){
+    const tbl=$("#"+tableId); tbl.innerHTML='';
+    const thead=document.createElement('thead'); const trh=document.createElement('tr');
+    const thName=document.createElement('th'); thName.textContent='姓名'; trh.appendChild(thName);
+
+    const dates=headerDates();
+    DAYS.forEach((d,i)=>{
+      const th=document.createElement('th');
+      const d1=document.createElement('span'); d1.className='day'; d1.textContent=d;
+      const d2=document.createElement('span'); d2.className='date'; d2.textContent=fmt(dates[i]);
+      th.appendChild(d1); th.appendChild(d2); trh.appendChild(th);
+    });
+    thead.appendChild(trh); tbl.appendChild(thead);
+
+    const tbody=document.createElement('tbody');
+    for(let r=0;r<DEFAULT_ROWS;r++) addRowToTable(tbody);
+    tbl.appendChild(tbody);
+  }
+
+  function addRowToTable(tbody){
+    const tr=document.createElement('tr');
+    const tdName=document.createElement('td'); tdName.className='name'; tdName.contentEditable=true; tdName.spellcheck=false; tdName.addEventListener('input', autoSave); tr.appendChild(tdName);
+    for(let c=0;c<7;c++){
+      const td=document.createElement('td');
+      const selStart=document.createElement('select'); selStart.appendChild(OPTION_FRAG_START.cloneNode(true));
+      const selEnd=document.createElement('select'); selEnd.appendChild(OPTION_FRAG_END.cloneNode(true));
+      selStart.addEventListener('change', autoSave);
+      selEnd.addEventListener('change', autoSave);
+      td.appendChild(selStart);
+      td.appendChild(document.createTextNode(' ~ '));
+      td.appendChild(selEnd);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  function addRow(store){
+    const tbl=$("#table-"+store);
+    const tbody=tbl.querySelector('tbody');
+    addRowToTable(tbody);
+    autoSave();
+  }
+
+  function snapshot(){
+    const data={};
+    ['da-ye','gueishan'].forEach(key=>{
+      const rows=[...$("#table-"+key).querySelectorAll('tbody tr')].map(tr=>{
+        const name=tr.children[0].textContent.trim();
+        const days=[...tr.querySelectorAll('td')].slice(1).map(td=>{
+          const s=td.querySelectorAll('select');
+          return [s[0].value,s[1].value];
+        });
+        return {name,days};
+      });
+      data[key]=rows;
+    });
+    return data;
+  }
+  function autoSave(){localStorage.setItem(KEY, JSON.stringify(snapshot()));}
+  function restore(data){
+    if(!data) return;
+    ['da-ye','gueishan'].forEach(key=>{
+      const tbl=$("#table-"+key); buildTable(tbl.id);
+      const rows=data[key]||[]; const tbody=tbl.querySelector('tbody');
+      rows.forEach((row,idx)=>{
+        if(idx<tbody.children.length){
+          const tr=tbody.children[idx]; tr.children[0].textContent=row.name||'';
+          row.days.forEach((d,i)=>{
+            const td=tr.children[i+1];
+            const sels=td.querySelectorAll('select');
+            sels[0].value=d[0]||'';
+            sels[1].value=d[1]||'';
+          });
+        }else{
+          addRowToTable(tbody);
+          const tr=tbody.children[idx]; tr.children[0].textContent=row.name||'';
+          row.days.forEach((d,i)=>{
+            const td=tr.children[i+1];
+            const sels=td.querySelectorAll('select');
+            sels[0].value=d[0]||'';
+            sels[1].value=d[1]||'';
+          });
+        }
+      });
+    });
+  }
+
+  async function capture(el){return await html2canvas(el,{backgroundColor:'#000',scale:2})}
+  function downloadDataURL(url,name){
+    const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+    if(isIOS){const w=window.open(); if(w){w.document.write('<title>'+name+'</title><img src="'+url+'" style="width:100%;display:block">');}}
+  }
+
+  async function shotOne(secId, prefix){
+    const title=$('#rangeText').textContent.replace(/\s|–/g,'_');
+    const c=await capture($(secId)); downloadDataURL(c.toDataURL('image/png'), prefix+'_'+title+'.png');
+  }
+  async function shotMerge(){
+    const title=$('#rangeText').textContent.replace(/\s|–/g,'_');
+    const c1=await capture($('#sec-daye')); const c2=await capture($('#sec-gueishan'));
+    const w=c1.width+c2.width, h=Math.max(c1.height,c2.height);
+    const combo=document.createElement('canvas'); combo.width=w; combo.height=h; const g=combo.getContext('2d');
+    g.fillStyle='#000'; g.fillRect(0,0,w,h); g.drawImage(c1,0,0); g.drawImage(c2,c1.width,0);
+    downloadDataURL(combo.toDataURL('image/png'),'並列_'+title+'.png');
+  }
+
+  function updateRangeText(){
+    const tue = getDisplayStartTuesday();
+    const { endMon } = datesTueToMon(tue);
+    $('#rangeText').textContent = fmt(tue)+' – '+fmt(endMon);
+  }
+
+  function rebuildKeepingData(){
+    const data = snapshot();
+    buildTable('table-da-ye');
+    buildTable('table-gueishan');
+    restore(data);
+    updateRangeText();
+  }
+
+  function scheduleTicker(){
+    const startTue = getDisplayStartTuesday();
+    const ms = startTue.getTime();
+    if (ms !== currentDisplayStartMs){
+      currentDisplayStartMs = ms;
+      rebuildKeepingData();
+    }
+  }
+
+  (function init(){
+    currentDisplayStartMs = getDisplayStartTuesday().getTime();
+    buildTable('table-da-ye');
+    buildTable('table-gueishan');
+    updateRangeText();
+
+    try{
+      const data=JSON.parse(localStorage.getItem(KEY)||'null'); 
+      if(data) restore(data);
+    }catch(e){}
+
+    $('#btnSave').addEventListener('click',()=>{autoSave(); $('#btnSave').textContent='已儲存'; setTimeout(()=>$('#btnSave').textContent='儲存',900)});
+    $('#btnLoad').addEventListener('click',()=>{const d=JSON.parse(localStorage.getItem(KEY)||'null'); restore(d)});
+    $('#btnClear').addEventListener('click',()=>{if(confirm('確定要清空全部資料嗎？')){localStorage.removeItem(KEY); location.reload();}});
+    $('#btnShotDaYe').addEventListener('click',()=>shotOne('#sec-daye','大業店'));
+    $('#btnShotGueishan').addEventListener('click',()=>shotOne('#sec-gueishan','龜山店'));
+    $('#btnShotMerge').addEventListener('click',shotMerge);
+
+    // Kiểm tra mỗi 60 giây: khi chạm 00:01 thứ 3 sẽ tự nhảy sang tuần mới (Thứ 3 -> Thứ 2)
+    setInterval(scheduleTicker, 60000);
+  })();
+  </script>
+</body>
+</html>
